@@ -1,0 +1,15 @@
+{
+    "num_draft": 5,
+    "max_verify": 8,
+    "max_steps": 32,
+    
+    "_comment_length_control": "========== 长度控制参数 ==========",
+    "max_new_tokens": 10,
+    "max_total_tokens": 200,
+    "min_new_tokens": 5,
+    
+    "_comment_stop_conditions": "========== 停止条件 ==========",
+    "stop_on_punctuation": true,
+    "custom_stop_words": ["谢谢", "thank you", "再见"]
+}
+  

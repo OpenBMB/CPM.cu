@@ -122,8 +122,17 @@ def create_cli_parser() -> argparse.ArgumentParser:
                        type=str2bool, nargs='?', const=True,
                        help='Ignore EOS tokens during generation (default: False)')
     
+    # 添加数据集相关参数到Generation Configuration组
+    generation_group.add_argument("--dataset", type=str, 
+                            choices=['mtbench', 'specbench', 'gsm8k', 'qa', 'wmt14', 'rag', 'summarization'], 
+                            help="Dataset type to evaluate on")
+    generation_group.add_argument("--dataset-path", "--dataset_path", type=str, 
+                            help="Path to dataset file (for mtbench path, default uses benchmark/datasets/mtbench.jsonl)")
+    generation_group.add_argument("--output-dir", "--output_dir", type=str, default="benchmark/results/logs",
+                            help="Directory to save benchmark datasets evaluation results, only enable when dataset is used")
+    generation_group.add_argument("--batch-size", "--batch_size", type=int, default=1,
+                            help="Batch size for dataset evaluation")
 
-    
     add_model_config_args(parser)
     return parser
 

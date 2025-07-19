@@ -1,11 +1,124 @@
 #pragma once
 #include <type_traits>
+#include <cstdlib>
+#include <cstring>
+#include <limits>
+#include <algorithm>
+#include <vector>
+#include <string>
+#include <cuda_fp16.h>
 #include "../tree_drafter.cuh"
 #include "../eagle.cuh"
 #include "minicpm4_model.cuh"
 #include "minicpm4_w4a16_gptq_marlin_model.cuh"
 #include "../w4a16_gptq_marlin/w4a16_gptq_marlin_layer.cuh"
 #include "../w4a16_gptq_marlin/w4a16_gptq_marlin_linear.cuh"
+
+// LogitsHook for debugging speculative inference differences
+template<typename T>
+class LogitsHook {
+private:
+    bool enabled;
+    std::vector<std::vector<float>> logits_history;
+    std::vector<int> tokens_history;
+    std::string config_name;
+    
+public:
+    LogitsHook(const std::string& name = "default") : enabled(false), config_name(name) {
+        // Check if logging is enabled via environment variable
+        const char* enable_logging = getenv("CPMCU_LOG_LOGITS");
+        enabled = (enable_logging != nullptr && strcmp(enable_logging, "1") == 0);
+        
+        if (enabled) {
+            printf("🔧 LogitsHook enabled for config: %s\n", config_name.c_str());
+        }
+    }
+    
+    void log_logits(int step, int vocab_size, const T* logits, int selected_token = -1) {
+        if (!enabled) return;
+        
+        // Allocate host memory for copying GPU data
+        std::vector<float> step_logits(vocab_size);
+        
+        // Copy GPU data to host memory safely
+        if (std::is_same_v<T, half>) {
+            // For half precision, we need to handle the conversion carefully
+            std::vector<half> host_logits(vocab_size);
+            cudaMemcpy(host_logits.data(), logits, vocab_size * sizeof(half), cudaMemcpyDeviceToHost);
+            cudaDeviceSynchronize(); // Ensure copy is complete
+            
+            // Convert half to float
+            for (int i = 0; i < vocab_size; i++) {
+                step_logits[i] = __half2float(host_logits[i]);
+            }
+        } else {
+            // For float types, direct copy and convert
+            std::vector<T> host_logits(vocab_size);
+            cudaMemcpy(host_logits.data(), logits, vocab_size * sizeof(T), cudaMemcpyDeviceToHost);
+            cudaDeviceSynchronize(); // Ensure copy is complete
+            
+            for (int i = 0; i < vocab_size; i++) {
+                step_logits[i] = static_cast<float>(host_logits[i]);
+            }
+        }
+        
+        logits_history.push_back(step_logits);
+        tokens_history.push_back(selected_token);
+        
+        // Print summary
+        auto max_it = std::max_element(step_logits.begin(), step_logits.end());
+        auto min_it = std::min_element(step_logits.begin(), step_logits.end());
+        
+        printf("📊 Step %d [%s]: selected_token=%d, logits_range=[%.6f, %.6f]\n", 
+               step, config_name.c_str(), selected_token, *min_it, *max_it);
+        
+        // Save to file periodically
+        if (step % 10 == 0 || step < 5) {
+            save_to_file();
+        }
+    }
+    
+    void save_to_file() {
+        if (!enabled || logits_history.empty()) return;
+        
+        std::string filename = "logits_" + config_name + "_steps" + std::to_string(logits_history.size()) + ".txt";
+        FILE* f = fopen(filename.c_str(), "w");
+        if (!f) return;
+        
+        fprintf(f, "# Logits history for config: %s\n", config_name.c_str());
+        fprintf(f, "# Format: step,selected_token,top5_token_ids,top5_logits\n");
+        
+        for (size_t step = 0; step < logits_history.size(); step++) {
+            const auto& logits = logits_history[step];
+            int token = tokens_history[step];
+            
+            // Find top 5 tokens
+            std::vector<std::pair<float, int>> logit_pairs;
+            for (size_t i = 0; i < logits.size(); i++) {
+                logit_pairs.push_back({logits[i], (int)i});
+            }
+            std::sort(logit_pairs.rbegin(), logit_pairs.rend());
+            
+            fprintf(f, "%zu,%d", step, token);
+            for (int i = 0; i < 5 && i < (int)logit_pairs.size(); i++) {
+                fprintf(f, ",%d", logit_pairs[i].second);
+            }
+            for (int i = 0; i < 5 && i < (int)logit_pairs.size(); i++) {
+                fprintf(f, ",%.6f", logit_pairs[i].first);
+            }
+            fprintf(f, "\n");
+        }
+        
+        fclose(f);
+        printf("💾 Saved logits to: %s\n", filename.c_str());
+    }
+    
+    ~LogitsHook() {
+        if (enabled) {
+            save_to_file();
+        }
+    }
+};
 
 template<typename T, class ModelType, class LayerType, class Fc1Type, class Fc2Type>
 struct MiniCPM4EagleImpl : Model {
@@ -47,6 +160,9 @@ struct MiniCPM4EagleImpl : Model {
 
     T* a_tmp = nullptr;
     float* c_tmp = nullptr;
+
+    // Logits debugging hook
+    LogitsHook<T>* logits_hook = nullptr;
 
     MiniCPM4EagleImpl(
         ModelType* model,
@@ -106,7 +222,18 @@ struct MiniCPM4EagleImpl : Model {
         assert(this->topk_per_iter <= this->tree_size-1);
 
         topk_func = new functions::TopK<T>(this->frspec_vocab_size, this->topk_per_iter);
-        topk_func_2 = new functions::TopK<T>(this->total_tried, this->tree_size-1);
+        
+        // FIX: Use a consistent maximum size for topk_func_2 regardless of num_iter
+        // This ensures deterministic behavior across different configurations
+        // The maximum possible total_tried is when num_iter is at its maximum reasonable value
+        int max_reasonable_iter = 10; // Conservative upper bound
+        int max_total_tried = topk_per_iter * topk_per_iter * (max_reasonable_iter - 1) + topk_per_iter;
+        int max_tree_candidates = 64 - 1; // Maximum tree_size is 64, so max candidates is 63
+        topk_func_2 = new functions::TopK<T>(max_total_tried, max_tree_candidates);
+
+        // Initialize logits debugging hook
+        std::string hook_name = "iter" + std::to_string(num_iter) + "_tree" + std::to_string(tree_size);
+        logits_hook = new LogitsHook<T>(hook_name);
     }
 
     void init_weight_ptr(Memory* memory) {
@@ -153,8 +280,11 @@ struct MiniCPM4EagleImpl : Model {
         offset = memory->allocate((void**)&eagle_logits, offset, this->topk_per_iter * this->frspec_vocab_size * sizeof(T));
         offset = memory->allocate((void**)&eagle_mask_2d, offset, this->topk_per_iter * sizeof(uint64_t));
         offset = memory->allocate((void**)&tmp_mask_2d, offset, this->topk_per_iter * sizeof(uint64_t));
-        offset = memory->allocate((void**)&tried_history_val, offset, this->total_tried * sizeof(T));
-        offset = memory->allocate((void**)&tried_history_pos, offset, this->total_tried * sizeof(int32_t));
+        // FIX: Allocate consistent memory size regardless of num_iter configuration
+        int max_reasonable_iter = 10; // Must match the value in constructor
+        int max_total_tried = topk_per_iter * topk_per_iter * (max_reasonable_iter - 1) + topk_per_iter;
+        offset = memory->allocate((void**)&tried_history_val, offset, max_total_tried * sizeof(T));
+        offset = memory->allocate((void**)&tried_history_pos, offset, max_total_tried * sizeof(int32_t));
         if (this->num_iter > 1) {
             offset = memory->allocate((void**)&tried_history_parent, offset, this->topk_per_iter * (this->num_iter - 1) * sizeof(int32_t));
         }
@@ -310,6 +440,20 @@ struct MiniCPM4EagleImpl : Model {
         cudaMemcpy(this->eagle_original_length, cache_length, sizeof(int32_t), cudaMemcpyDeviceToHost);
         this->eagle_padded_length = (this->eagle_original_length[0] + 256 - 1) / 128 * 128;
 
+        // FIX: Initialize tried_history_val to ensure deterministic behavior
+        // This prevents uninitialized memory from affecting TopK results
+        if (this->is_first_draft) {
+            int max_reasonable_iter = 10; // Must match the value in constructor/init_output_ptr
+            int max_total_tried = topk_per_iter * topk_per_iter * (max_reasonable_iter - 1) + topk_per_iter;
+            // Initialize the entire buffer to negative infinity
+            // This ensures that uninitialized entries will never be selected by TopK
+            T neg_inf = -std::numeric_limits<T>::infinity();
+            T* h_neg_inf_buffer = new T[max_total_tried];
+            std::fill(h_neg_inf_buffer, h_neg_inf_buffer + max_total_tried, neg_inf);
+            cudaMemcpy(this->tried_history_val, h_neg_inf_buffer, max_total_tried * sizeof(T), cudaMemcpyHostToDevice);
+            delete[] h_neg_inf_buffer;
+        }
+
 
         if (this->is_first_draft) {
             this->model->embedding->prefill(calc_stream, 1, tree_draft_ids);
@@ -324,6 +468,14 @@ struct MiniCPM4EagleImpl : Model {
         { // d = 0
             lm_head->prefill(calc_stream, 1, this->fc2->output + (num_prev - 1) * this->model->hidden_size, this->eagle_logits);
             log_softmax(calc_stream, 1, this->frspec_vocab_size, this->eagle_logits);
+            
+            // Log logits for debugging
+            if (logits_hook) {
+                // Copy logits to CPU for logging (simplified approach)
+                cudaDeviceSynchronize();
+                logits_hook->log_logits(0, this->frspec_vocab_size, this->eagle_logits);
+            }
+            
             this->topk_func->prefill(calc_stream, 1, this->eagle_logits);
             cudaMemcpy(this->tried_history_val, this->topk_func->topk_val, topk_per_iter * sizeof(T), cudaMemcpyDeviceToDevice);
             cudaMemcpy(this->tried_history_pos, this->topk_func->topk_pos, topk_per_iter * sizeof(int32_t), cudaMemcpyDeviceToDevice);
@@ -370,6 +522,14 @@ struct MiniCPM4EagleImpl : Model {
 
             lm_head->prefill(calc_stream, topk_per_iter, this->fc2->output, this->eagle_logits);
             log_softmax(calc_stream, topk_per_iter, this->frspec_vocab_size, this->eagle_logits);
+            
+            // Log logits for debugging (iteration d)
+            if (logits_hook) {
+                cudaDeviceSynchronize();
+                // Log first token's logits in this iteration
+                logits_hook->log_logits(d, this->frspec_vocab_size, this->eagle_logits);
+            }
+            
             this->topk_func->prefill(calc_stream, topk_per_iter, this->eagle_logits);
             cumsum(calc_stream, topk_per_iter, topk_per_iter, this->topk_func->topk_val, this->topk_func_2->topk_val);
             cudaMemcpy(this->tried_history_val + topk_per_iter + (d - 1) * topk_per_iter * topk_per_iter, this->topk_func->topk_val, topk_per_iter * topk_per_iter * sizeof(T), cudaMemcpyDeviceToDevice);
@@ -387,14 +547,27 @@ struct MiniCPM4EagleImpl : Model {
             }
         }
 
-        this->topk_func_2->prefill(calc_stream, 1, this->tried_history_val);
+        // Calculate the actual number of valid entries in tried_history_val
+        // Only the entries filled during the iterations are valid
+        int valid_tried_count = topk_per_iter; // d = 0 contributes topk_per_iter entries
+        for (int d = 1; d < this->num_iter; ++d) {
+            valid_tried_count += topk_per_iter * topk_per_iter; // each iteration d contributes topk_per_iter^2 entries
+        }
+        
+        // BUG FIX: Only select from actually computed values, not uninitialized memory
+        // The original code had a bug where topk_func_2 would read total_tried values,
+        // but only valid_tried_count values were actually computed, leading to 
+        // non-deterministic behavior due to uninitialized memory access
+        int candidates_to_select = min(valid_tried_count, this->tree_size - 1);
+        
+        this->topk_func_2->prefill(calc_stream, 1, this->tried_history_val, valid_tried_count, candidates_to_select);
 
         // build tree
-        build_dynamic_tree(calc_stream, this->tree_size, this->eagle_original_length[0], this->topk_per_iter, this->tried_history_parent, this->topk_func_2->topk_pos, tree_position_ids, tree_attn_mask, tree_parent);
+        build_dynamic_tree(calc_stream, candidates_to_select + 1, this->eagle_original_length[0], this->topk_per_iter, this->tried_history_parent, this->topk_func_2->topk_pos, tree_position_ids, tree_attn_mask, tree_parent);
         if (this->frspec_vocab_size != this->model->vocab_size) {
-            remap_id_fr(calc_stream, this->tree_size-1, this->topk_func_2->topk_pos, this->tried_history_pos, this->token_id_remap, tree_draft_ids + 1);
+            remap_id_fr(calc_stream, candidates_to_select, this->topk_func_2->topk_pos, this->tried_history_pos, this->token_id_remap, tree_draft_ids + 1);
         } else {
-            remap_id(calc_stream, this->tree_size-1, this->topk_func_2->topk_pos, this->tried_history_pos, tree_draft_ids + 1);
+            remap_id(calc_stream, candidates_to_select, this->topk_func_2->topk_pos, this->tried_history_pos, tree_draft_ids + 1);
         }
 
         this->is_first_draft = false;
