@@ -54,6 +54,9 @@ def add_model_config_args(parser: argparse.ArgumentParser):
 
     # Speculative Decoding
     spec_group = parser.add_argument_group('Speculative Decoding')
+    spec_group.add_argument("--use-eagle3", "--use_eagle3", default=False,
+                            type=str2bool, nargs='?', const=True,
+                            help='Use Eagle3 for speculative decoding (default: False)')
     spec_group.add_argument('--spec-window-size', '--spec_window_size', type=int, default=1024,
                            help='Speculative decoding slidingwindow size (default: 1024)')
     spec_group.add_argument('--spec-num-iter', '--spec_num_iter', type=int, default=2,

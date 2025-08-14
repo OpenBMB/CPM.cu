@@ -28,7 +28,9 @@ struct W4A16GPTQMarlinAttention {
 
     T* permute_qkv_output;
 
-    W4A16GPTQMarlinAttention(int hidden_size, int num_attention_heads, int num_key_value_heads, int head_dim, float rms_norm_eps, int group_size, int window_size = 0, bool use_qk_norm = false, bool use_attn_bias = false) {
+    int hidden_factor;
+
+    W4A16GPTQMarlinAttention(int hidden_size, int num_attention_heads, int num_key_value_heads, int head_dim, float rms_norm_eps, int group_size, int window_size = 0, bool use_qk_norm = false, bool use_attn_bias = false, int hidden_factor = 1) {
         this->hidden_size = hidden_size;
         this->num_attention_heads = num_attention_heads;
         this->num_key_value_heads = num_key_value_heads;
@@ -36,13 +38,14 @@ struct W4A16GPTQMarlinAttention {
         this->rms_norm_eps = rms_norm_eps;
         this->use_qk_norm = use_qk_norm;
         this->use_attn_bias = use_attn_bias;
+        this->hidden_factor = hidden_factor;
 
         this->attn_norm = new RMSNorm<T>(hidden_size, rms_norm_eps);
 
-        this->qkv_proj = new W4A16GPTQMarlinLinear<T>(hidden_size, (num_attention_heads + 2*num_key_value_heads) * head_dim, group_size);
-        this->q_proj = new W4A16GPTQMarlinLinear<T>(hidden_size, num_attention_heads * head_dim, group_size);
-        this->k_proj = new W4A16GPTQMarlinLinear<T>(hidden_size, num_key_value_heads * head_dim, group_size);
-        this->v_proj = new W4A16GPTQMarlinLinear<T>(hidden_size, num_key_value_heads * head_dim, group_size);
+        this->qkv_proj = new W4A16GPTQMarlinLinear<T>(hidden_factor * hidden_size, (num_attention_heads + 2*num_key_value_heads) * head_dim, group_size);
+        this->q_proj = new W4A16GPTQMarlinLinear<T>(hidden_factor * hidden_size, num_attention_heads * head_dim, group_size);
+        this->k_proj = new W4A16GPTQMarlinLinear<T>(hidden_factor * hidden_size, num_key_value_heads * head_dim, group_size);
+        this->v_proj = new W4A16GPTQMarlinLinear<T>(hidden_factor * hidden_size, num_key_value_heads * head_dim, group_size);
         
         this->o_proj = new W4A16GPTQMarlinLinear<T>(num_attention_heads * head_dim, hidden_size, group_size);
 
@@ -61,8 +64,8 @@ struct W4A16GPTQMarlinAttention {
         this->attn_norm->init_weight_ptr(memory);
         this->qkv_proj->init_weight_ptr(memory);
         this->q_proj->weight = this->qkv_proj->weight;
-        this->k_proj->weight = this->q_proj->weight + hidden_size * this->num_attention_heads * this->head_dim;
-        this->v_proj->weight = this->k_proj->weight + hidden_size * this->num_key_value_heads * this->head_dim;
+        this->k_proj->weight = this->q_proj->weight + this->hidden_factor * hidden_size * this->num_attention_heads * this->head_dim;
+        this->v_proj->weight = this->k_proj->weight + this->hidden_factor * hidden_size * this->num_key_value_heads * this->head_dim;
         this->o_proj->init_weight_ptr(memory);
         
         if (this->use_qk_norm) {
@@ -116,18 +119,18 @@ struct W4A16GPTQMarlinAttention {
             this->q_norm->load_to_storage(name, ptr);
         } else if (name.find("k_norm") != std::string::npos && this->use_qk_norm) {
             this->k_norm->load_to_storage(name, ptr);
-        } else if (name.find("input_layernorm") != std::string::npos) {
+        } else if (name.find("input_layernorm") != std::string::npos || name.find("hidden_norm") != std::string::npos) {
             this->attn_norm->load_to_storage(name, ptr);
         } else {
             throw std::invalid_argument("Attn Unsupported name " + name);
         }
     }
 
-    void prefill(const Stream& stream, int32_t num_tokens, int32_t num_history_tokens, T* input, T* prev_output, int32_t* position_ids, KVCache<T>* kv_cache, T* a_tmp, float* c_tmp) {
+    void prefill(const Stream& stream, int32_t num_tokens, int32_t num_history_tokens, T* input, T* prev_output, int32_t* position_ids, KVCache<T>* kv_cache, T* a_tmp, float* c_tmp, T* embed = nullptr) {
         T* k_cache = kv_cache->offset_k(num_history_tokens);
         T* v_cache = kv_cache->offset_v(num_history_tokens);
 
-        this->attn_norm->prefill(stream, num_tokens, input, prev_output);
+        this->attn_norm->prefill(stream, num_tokens, input, prev_output, embed);
         this->qkv_proj->prefill(stream, num_tokens, this->attn_norm->output, a_tmp, c_tmp);
         permute(stream, num_tokens, this->num_attention_heads * this->head_dim, this->num_key_value_heads * this->head_dim, this->qkv_proj->output, this->permute_qkv_output);
         cudaMemcpy(k_cache, this->permute_qkv_output + num_tokens*this->num_attention_heads*this->head_dim, num_tokens*this->num_key_value_heads*this->head_dim*sizeof(T), cudaMemcpyDeviceToDevice);
@@ -173,8 +176,8 @@ struct W4A16GPTQMarlinAttention {
         this->o_proj->prefill(stream, num_tokens, this->attn_output, a_tmp, c_tmp);
     }
 
-    void decode(const Stream& stream, int32_t num_tokens, int32_t padded_length, T* input, T* prev_output, int32_t* position_ids, int32_t* cache_length, const Mask& mask, KVCache<T>* kv_cache, T* a_tmp, float* c_tmp) {
-        this->attn_norm->prefill(stream, num_tokens, input, prev_output);
+    void decode(const Stream& stream, int32_t num_tokens, int32_t padded_length, T* input, T* prev_output, int32_t* position_ids, int32_t* cache_length, const Mask& mask, KVCache<T>* kv_cache, T* a_tmp, float* c_tmp, T* embed = nullptr) {
+        this->attn_norm->prefill(stream, num_tokens, input, prev_output, embed);
         T *q, *k, *v;
 
         if (num_tokens > 1) {

@@ -20,9 +20,13 @@ class W4A16GPTQMarlinLLM_with_eagle(W4A16GPTQMarlinLLM_with_tree_drafter):
                  use_input_norm: bool=False,
                  use_attn_norm: bool=False,
                  use_rotation: bool=False,
+                 use_eagle3: bool=False,
                  **kwargs):
+        
+        drafter_type = "eagle3" if use_eagle3 else "eagle"
+        
         super().__init__(
-            "eagle", eagle_path, base_path,
+            drafter_type, eagle_path, base_path,
             tree_size = tree_size,
             **kwargs
         )
@@ -37,13 +41,14 @@ class W4A16GPTQMarlinLLM_with_eagle(W4A16GPTQMarlinLLM_with_tree_drafter):
             # Qwen3 models have explicit head_dim that might be different
             logger.info(f"Using explicit head_dim from eagle config: {self.eagle_config.head_dim}")
         
-        # Ensure presence consistency and equality for scale_depth, dim_model_base, and scale_emb
-        for attr in ("scale_depth", "dim_model_base", "scale_emb"):
-            base_has = hasattr(self.config, attr)
-            eagle_has = hasattr(self.eagle_config, attr)
-            assert base_has == eagle_has, f"{attr} presence mismatch between base and eagle config"
-            if base_has:
-                assert getattr(self.config, attr) == getattr(self.eagle_config, attr), f"{attr} in base config and eagle config should be the same"
+        if not use_eagle3:
+            # Ensure presence consistency and equality for scale_depth, dim_model_base, and scale_emb
+            for attr in ("scale_depth", "dim_model_base", "scale_emb"):
+                base_has = hasattr(self.config, attr)
+                eagle_has = hasattr(self.eagle_config, attr)
+                assert base_has == eagle_has, f"{attr} presence mismatch between base and eagle config"
+                if base_has:
+                    assert getattr(self.config, attr) == getattr(self.eagle_config, attr), f"{attr} in base config and eagle config should be the same"
         scale_residual = self.config.scale_depth / math.sqrt(self.config.num_hidden_layers + 1) if hasattr(self.config, "scale_depth") else 1.0
         self.use_rotation = use_rotation
         self.apply_eagle_quant = apply_eagle_quant
@@ -52,25 +57,11 @@ class W4A16GPTQMarlinLLM_with_eagle(W4A16GPTQMarlinLLM_with_tree_drafter):
         else:
             self.group_size = 0
         assert self.group_size == 128 or self.group_size == 0, "only group_size 128 is supported in quantization mode"
-
-        if not use_rope and not use_input_norm and not use_attn_norm and not apply_eagle_quant:
-            if not use_rotation:
-                C.init_eagle_model(
-                    self.eagle_config.eagle_num_layers,
-                    self.eagle_config.intermediate_size,
-                    self.eagle_config.num_attention_heads,
-                    self.eagle_config.num_key_value_heads,
-                    self.eagle_config.head_dim,
-                    self.eagle_config.rms_norm_eps,
-                    num_iter,
-                    topk_per_iter,
-                    self.tree_size,
-                    self.dtype_int
-                )
-            else:
-                raise NotImplementedError("Rotation is not supported in quantization mode")
-        else:
-            C.init_minicpm4_eagle_model(
+        
+        if use_eagle3:
+            if not use_rope:
+                scale_residual = 1.0
+            C.init_minicpm4_eagle3_model(
                 self.eagle_config.eagle_num_layers,
                 self.eagle_config.intermediate_size,
                 self.eagle_config.num_attention_heads,
@@ -84,14 +75,49 @@ class W4A16GPTQMarlinLLM_with_eagle(W4A16GPTQMarlinLLM_with_tree_drafter):
                 apply_eagle_quant,
                 self.group_size,
                 eagle_window_size,
-                frspec_vocab_size,
-                scale_residual,
-                use_input_norm, 
-                use_attn_norm
+                self.eagle_config.draft_vocab_size,
+                scale_residual
             )
+        else:
+            if not use_rope and not use_input_norm and not use_attn_norm and not apply_eagle_quant:
+                if not use_rotation:
+                    C.init_eagle_model(
+                        self.eagle_config.eagle_num_layers,
+                        self.eagle_config.intermediate_size,
+                        self.eagle_config.num_attention_heads,
+                        self.eagle_config.num_key_value_heads,
+                        self.eagle_config.head_dim,
+                        self.eagle_config.rms_norm_eps,
+                        num_iter,
+                        topk_per_iter,
+                        self.tree_size,
+                        self.dtype_int
+                    )
+                else:
+                    raise NotImplementedError("Rotation is not supported in quantization mode")
+            else:
+                C.init_minicpm4_eagle_model(
+                    self.eagle_config.eagle_num_layers,
+                    self.eagle_config.intermediate_size,
+                    self.eagle_config.num_attention_heads,
+                    self.eagle_config.num_key_value_heads,
+                    self.eagle_config.head_dim,
+                    self.eagle_config.rms_norm_eps,
+                    num_iter,
+                    topk_per_iter,
+                    self.tree_size,
+                    self.dtype_int,
+                    apply_eagle_quant,
+                    self.group_size,
+                    eagle_window_size,
+                    frspec_vocab_size,
+                    scale_residual,
+                    use_input_norm, 
+                    use_attn_norm
+                )
 
     def _load(self, name, param, dtype=None, cls=None):
-        if cls == self.drafter_type:
+        if cls == "eagle":
             if name == "token_id_remap":
                 C.load_model(f"{cls}.{name}", param.data_ptr())
                 return
@@ -112,5 +138,25 @@ class W4A16GPTQMarlinLLM_with_eagle(W4A16GPTQMarlinLLM_with_tree_drafter):
                     C.load_model(f"{cls}.{name.replace('fc', 'fc1')}", param.data_ptr())
             else:
                 C.load_model(f"{cls}.{name}", param.data_ptr())
+        elif cls == "eagle3":
+            if dtype is None:
+                dtype = self.dtype
+            param = param.contiguous()
+            if 'd2t' in name:
+                param = param.to(torch.int32)
+                C.load_model(f"{cls}.{name}", param.data_ptr())
+                return
+            if not self.apply_eagle_quant:
+                param = param.to(dtype)
+            if 'embed_tokens' in name:
+                return
+            C.load_model(f"{cls}.{name}", param.data_ptr())
         else:
             super()._load(name, param, dtype)
+
+    def load_from_hf(self):
+        super().load_from_hf()
+        
+        if self.drafter_type == "eagle3":
+            inv_freq = 1.0 / (10000 ** (torch.arange(0, self.eagle_config.head_dim, 2).float() / self.eagle_config.head_dim))
+            self._load(f"{self.drafter_type}.rotary_emb.inv_freq", inv_freq, dtype=torch.float32)

@@ -49,6 +49,17 @@ __global__ void batched_mul_kernel(int dim, const T* a, const T* b, T* c) {
         c[row * dim + i] = a[row * dim + i] * bv;
     }
 }
+
+template <typename T, typename T2>
+__global__ void elementwise_add_and_concat3_kernel(int dim, int offset, const T2* a, const T2* b, T2* c, float scale) {
+    int row = blockIdx.x * dim;
+    int col = blockIdx.y * blockDim.x + threadIdx.x;
+    if (col < dim) {
+        T2 scale2 = T2(T(scale), T(scale));
+        c[row * 3 + col + offset] = (a[row + col] + b[row + col] * scale2) * scale2;
+    }
+}
+
 } // namespace
 
 template <typename T>
@@ -84,4 +95,21 @@ void elementwise_scale(const Stream& stream, int num_tokens, int dim, T* a, floa
 template <typename T>
 void batched_mul(const Stream& stream, int num_tokens, int dim, const T* a, const T* b, T* c) {
     batched_mul_kernel<<<num_tokens, 128, 0, stream.stream>>>(dim, (T*)a, (T*)b, (T*)c);
+}
+
+template <typename T>
+void elementwise_add_and_concat3(const Stream& stream, int num_tokens, int dim, int num_layers, int layer_idx, const T* a, const T* b, T* c, float scale) {
+    using T2 = typename TypeTraits<T>::half2;
+    dim = dim / 2;
+    int offset;
+    if (layer_idx == 2) {
+        offset = 0 * dim;
+    } else if (layer_idx == num_layers / 2) {
+        offset = 1 * dim;
+    } else if (layer_idx == num_layers - 3) {
+        offset = 2 * dim;
+    } else {
+        throw std::runtime_error("Unsupported layer index: " + std::to_string(layer_idx));
+    }
+    elementwise_add_and_concat3_kernel<T, T2><<<dim3(num_tokens, CEIL_DIV(dim, 512)), 512, 0, stream.stream>>>(dim, offset, (T2*)a, (T2*)b, (T2*)c, scale);
 }

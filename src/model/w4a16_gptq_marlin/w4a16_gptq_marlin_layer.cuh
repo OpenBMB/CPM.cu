@@ -17,9 +17,9 @@ struct W4A16GPTQMarlinLayer {
     float residual_scale;
     int hidden_size;
 
-    W4A16GPTQMarlinLayer(int hidden_size, int intermediate_size, int num_attention_heads, int num_key_value_heads, int head_dim, float rms_norm_eps, int group_size, float residual_scale = 1.0f, int window_size = 0, bool use_qk_norm = false, bool use_attn_bias = false) {
+    W4A16GPTQMarlinLayer(int hidden_size, int intermediate_size, int num_attention_heads, int num_key_value_heads, int head_dim, float rms_norm_eps, int group_size, float residual_scale = 1.0f, int window_size = 0, bool use_qk_norm = false, bool use_attn_bias = false, int hidden_factor = 1) {
         this->intermediate_size = intermediate_size;
-        this->attn = new W4A16GPTQMarlinAttention<T>(hidden_size, num_attention_heads, num_key_value_heads, head_dim, rms_norm_eps, group_size, window_size, use_qk_norm, use_attn_bias);
+        this->attn = new W4A16GPTQMarlinAttention<T>(hidden_size, num_attention_heads, num_key_value_heads, head_dim, rms_norm_eps, group_size, window_size, use_qk_norm, use_attn_bias, hidden_factor);
         this->ffn = new W4A16GPTQMarlinGatedFFN<T>(hidden_size, intermediate_size, rms_norm_eps, group_size);
         this->residual_scale = residual_scale;
         this->hidden_size = hidden_size;
@@ -52,12 +52,12 @@ struct W4A16GPTQMarlinLayer {
         }
     }
 
-    void prefill(int32_t num_tokens, int32_t num_history_tokens, T* input, T* prev_output, int32_t* position_ids, KVCache<T>* kv_cache, T* prev_layer_states=nullptr) {
+    void prefill(int32_t num_tokens, int32_t num_history_tokens, T* input, T* prev_output, int32_t* position_ids, KVCache<T>* kv_cache, T* prev_layer_states=nullptr, T* embed = nullptr) {
         if (prev_output != nullptr) {
             elementwise_scale(calc_stream, num_tokens, this->hidden_size, prev_output, this->residual_scale);
         }
         cuda_perf_start_on_stream_f(Q_PREFILL_ATTN, calc_stream.stream);
-        this->attn->prefill(calc_stream, num_tokens, num_history_tokens, input, prev_output, position_ids, kv_cache, a_tmp, c_tmp);
+        this->attn->prefill(calc_stream, num_tokens, num_history_tokens, input, prev_output, position_ids, kv_cache, a_tmp, c_tmp, embed);
         cuda_perf_stop_on_stream_f(Q_PREFILL_ATTN, calc_stream.stream);
         if (prev_layer_states != nullptr) {
             cudaMemcpyAsync(
@@ -74,12 +74,12 @@ struct W4A16GPTQMarlinLayer {
         cuda_perf_stop_on_stream_f(Q_PREFILL_FFN, calc_stream.stream);
     }
 
-    void decode(int32_t num_tokens, int32_t padded_length, T* input, T* prev_output, int32_t* position_ids, int32_t* cache_length, const Mask& mask, KVCache<T>* kv_cache, T* prev_layer_states=nullptr) {
+    void decode(int32_t num_tokens, int32_t padded_length, T* input, T* prev_output, int32_t* position_ids, int32_t* cache_length, const Mask& mask, KVCache<T>* kv_cache, T* prev_layer_states=nullptr, T* embed = nullptr) {
         if (prev_output != nullptr) {
             elementwise_scale(calc_stream, num_tokens, this->hidden_size, prev_output, this->residual_scale);
         }
         cuda_perf_start_on_stream_f(Q_DECODE_ATTN, calc_stream.stream);
-        this->attn->decode(calc_stream, num_tokens, padded_length, input, prev_output, position_ids, cache_length, mask, kv_cache, a_tmp, c_tmp);
+        this->attn->decode(calc_stream, num_tokens, padded_length, input, prev_output, position_ids, cache_length, mask, kv_cache, a_tmp, c_tmp, embed);
         cuda_perf_stop_on_stream_f(Q_DECODE_ATTN, calc_stream.stream);
         if (prev_layer_states != nullptr) {
             cudaMemcpyAsync(

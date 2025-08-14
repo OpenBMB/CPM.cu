@@ -141,7 +141,8 @@ def create_model(model_path, draft_model_path, config):
             'apply_eagle_quant': draft_model_quantized,
             'use_rope': config.get('model_type') in ['minicpm', 'minicpm4'],
             'use_input_norm': config.get('model_type') in ['minicpm', 'minicpm4'],
-            'use_attn_norm': config.get('model_type') in ['minicpm', 'minicpm4']
+            'use_attn_norm': config.get('model_type') in ['minicpm', 'minicpm4'],
+            'use_eagle3': config.get('use_eagle3', False)
         }
         
         # Create model based on configuration

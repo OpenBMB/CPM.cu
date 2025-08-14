@@ -77,8 +77,9 @@ struct Attention {
     float *softmax_lse, *softmax_lse_accum, *oaccum;
 
     int window_size;
+    int hidden_factor;
 
-    Attention(int hidden_size, int num_attention_heads, int num_key_value_heads, int head_dim, float rms_norm_eps, int window_size = 0, bool use_qk_norm = false, bool use_attn_bias = false) {
+    Attention(int hidden_size, int num_attention_heads, int num_key_value_heads, int head_dim, float rms_norm_eps, int window_size = 0, bool use_qk_norm = false, bool use_attn_bias = false, int hidden_factor = 1) {
         this->hidden_size = hidden_size;
         this->num_attention_heads = num_attention_heads;
         this->num_key_value_heads = num_key_value_heads;
@@ -86,13 +87,16 @@ struct Attention {
         this->rms_norm_eps = rms_norm_eps;
         this->use_qk_norm = use_qk_norm;
         this->use_attn_bias = use_attn_bias;
+        this->hidden_factor = hidden_factor;
+        
+        assert(hidden_factor == 1 || hidden_factor == 2);
 
         this->attn_norm = new RMSNorm<T>(hidden_size, rms_norm_eps);
 
-        this->qkv_proj = new Linear<T>(hidden_size, (num_attention_heads + 2 * num_key_value_heads) * head_dim, true, use_attn_bias);
-        this->q_proj = new Linear<T>(hidden_size, num_attention_heads * head_dim, true, use_attn_bias);
-        this->k_proj = new Linear<T>(hidden_size, num_key_value_heads * head_dim, true, use_attn_bias);
-        this->v_proj = new Linear<T>(hidden_size, num_key_value_heads * head_dim, true, use_attn_bias);
+        this->qkv_proj = new Linear<T>(hidden_factor * hidden_size, (num_attention_heads + 2 * num_key_value_heads) * head_dim, true, use_attn_bias);
+        this->q_proj = new Linear<T>(hidden_factor * hidden_size, num_attention_heads * head_dim, true, use_attn_bias);
+        this->k_proj = new Linear<T>(hidden_factor * hidden_size, num_key_value_heads * head_dim, true, use_attn_bias);
+        this->v_proj = new Linear<T>(hidden_factor * hidden_size, num_key_value_heads * head_dim, true, use_attn_bias);
         this->o_proj = new Linear<T>(num_attention_heads * head_dim, hidden_size, true, false); // o_proj 不需要 bias
 
         if (use_qk_norm) {
@@ -110,8 +114,8 @@ struct Attention {
         this->attn_norm->init_weight_ptr(memory);
         this->qkv_proj->init_weight_ptr(memory);
         this->q_proj->weight = this->qkv_proj->weight;
-        this->k_proj->weight = this->q_proj->weight + hidden_size * this->num_attention_heads * this->head_dim;
-        this->v_proj->weight = this->k_proj->weight + hidden_size * this->num_key_value_heads * this->head_dim;
+        this->k_proj->weight = this->q_proj->weight + this->hidden_factor * hidden_size * this->num_attention_heads * this->head_dim;
+        this->v_proj->weight = this->k_proj->weight + this->hidden_factor * hidden_size * this->num_key_value_heads * this->head_dim;
         
         if (this->use_attn_bias) {
             this->q_proj->bias = this->qkv_proj->bias;
@@ -172,16 +176,18 @@ struct Attention {
             this->k_norm->load_to_storage(name, ptr);
         } else if (name.find("input_layernorm") != std::string::npos) {
             this->attn_norm->load_to_storage(name, ptr);
+        } else if (name.find("hidden_norm") != std::string::npos && this->hidden_factor == 2) {
+            this->attn_norm->load_to_storage(name, ptr);
         } else {
             throw std::invalid_argument("Unsupported name " + name);
         }
     }
 
-    void prefill(const Stream& stream, int32_t num_tokens, int32_t num_history_tokens, T* input, T* prev_output, int32_t* position_ids, KVCache<T>* kv_cache) {
+    void prefill(const Stream& stream, int32_t num_tokens, int32_t num_history_tokens, T* input, T* prev_output, int32_t* position_ids, KVCache<T>* kv_cache, T* embed = nullptr) {
         T* k_cache = kv_cache->offset_k(num_history_tokens);
         T* v_cache = kv_cache->offset_v(num_history_tokens);
 
-        this->attn_norm->prefill(stream, num_tokens, input, prev_output);
+        this->attn_norm->prefill(stream, num_tokens, input, prev_output, nullptr, embed);
         this->q_proj->prefill(stream, num_tokens, this->attn_norm->output);
         this->k_proj->prefill(stream, num_tokens, this->attn_norm->output, k_cache);
         this->v_proj->prefill(stream, num_tokens, this->attn_norm->output, v_cache);
@@ -225,8 +231,8 @@ struct Attention {
         this->o_proj->prefill(stream, num_tokens, this->attn_output);
     }
 
-    void decode(const Stream& stream, int32_t num_tokens, int32_t padded_length, T* input, T* prev_output, int32_t* position_ids, int32_t* cache_length, const Mask& mask, KVCache<T>* kv_cache) {
-        this->attn_norm->prefill(stream, num_tokens, input, prev_output);
+    void decode(const Stream& stream, int32_t num_tokens, int32_t padded_length, T* input, T* prev_output, int32_t* position_ids, int32_t* cache_length, const Mask& mask, KVCache<T>* kv_cache, T* embed = nullptr) {
+        this->attn_norm->prefill(stream, num_tokens, input, prev_output, nullptr, embed);
         T *q = nullptr;
         if (num_tokens > 1) {
             this->qkv_proj->prefill(stream, num_tokens, this->attn_norm->output, this->v_proj->output); // v_proj->output is just a temporary buffer for later permute

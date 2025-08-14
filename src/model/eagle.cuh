@@ -221,32 +221,6 @@ void build_dynamic_tree(const Stream& stream, int32_t tree_size, int32_t pos_off
     build_dynamic_tree_kernel<<<1, tree_size, 0, stream.stream>>>(tree_size, pos_offset, topk_per_iter, tried_history_parent, topk_pos, tree_pos, tree_mask, tree_parent);
 }
 
-template<typename T>
-struct Skip : Norm<T> {
-    int dim;
-
-    Skip(int dim) {
-        this->dim = dim;
-    }
-
-    void init_weight_ptr(Memory* memory) {}
-
-    int64_t init_output_ptr(Memory* memory, int32_t num_tokens, int64_t offset) {
-        return memory->allocate((void**)&this->output, offset, num_tokens * dim * sizeof(T));
-    }
-
-    void load_to_storage(std::string name, void* ptr) {}
-
-    void prefill(const Stream& stream, int32_t num_tokens, T* input, T* prev_output, T* tgt=nullptr) {
-        if (tgt == nullptr) tgt = this->output;
-        if (prev_output == nullptr) {
-            cudaMemcpy(tgt, input, sizeof(T) * this->dim * num_tokens, cudaMemcpyDeviceToDevice);
-        } else {
-            elementwise_add(stream, num_tokens, this->dim, input, prev_output, tgt);
-        }
-    }
-};
-
 template<typename T, class ModelType>
 struct EagleImpl : Model {
     int num_layers;
