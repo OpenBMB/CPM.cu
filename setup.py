@@ -420,6 +420,7 @@ def create_build_extension():
 def build_cuda_extension():
     """Build CUDA extension if possible"""
     from torch.utils.cpp_extension import CUDAExtension
+    import torch
     
     # Show current build configuration
     show_current_config()
@@ -447,20 +448,50 @@ def build_cuda_extension():
     
     # Add NVCC thread configuration
     nvcc_threads = os.getenv("NVCC_THREADS") or "8"
-    final_nvcc_args = nvcc_args + gencode_args + arch_defines + ["-MMD", "-MP", "--threads", nvcc_threads, "--split-compile", nvcc_threads] 
+
+    # Detect whether nvcc supports specific flags (e.g., --threads / --split-compile)
+    def nvcc_supports(flag: str) -> bool:
+        nvcc_bin_candidates = []
+        cuda_home = os.environ.get("CUDA_HOME")
+        if cuda_home:
+            nvcc_bin_candidates.append(os.path.join(cuda_home, "bin", "nvcc"))
+        nvcc_bin_candidates.append("nvcc")
+        help_text = ""
+        for nvcc_bin in nvcc_bin_candidates:
+            try:
+                help_text = subprocess.check_output([nvcc_bin, "--help"], stderr=subprocess.STDOUT).decode("utf-8", errors="ignore")
+                break
+            except Exception:
+                continue
+        return flag in help_text
+
+    supports_threads = nvcc_supports("--threads")
+    supports_split = nvcc_supports("--split-compile")
+
+    final_nvcc_args = nvcc_args + gencode_args + arch_defines + ["-MMD", "-MP"]
+    if supports_threads:
+        final_nvcc_args += ["--threads", nvcc_threads]
+    if supports_split:
+        final_nvcc_args += ["--split-compile", nvcc_threads]
     
+    # Discover PyTorch libraries and add rpath so runtime can find libc10/libtorch
+    torch_lib_dir = os.path.join(os.path.dirname(torch.__file__), 'lib')
+    library_dirs = [torch_lib_dir]
+    runtime_library_dirs = [torch_lib_dir]
+
     # Create extension
     ext_modules = [
         CUDAExtension(
             name='cpmcu.C',
             sources=sources,
             libraries=["cublas", "dl"],
+            library_dirs=library_dirs,
             depends=headers,
             extra_compile_args={
                 "cxx": cxx_args,
                 "nvcc": final_nvcc_args,
             },
-            extra_link_args=link_args,
+            extra_link_args=link_args + [f"-Wl,-rpath,{torch_lib_dir}"] if link_args is not None else [f"-Wl,-rpath,{torch_lib_dir}"],
             include_dirs=[
                 f"{this_dir}/src/flash_attn",
                 f"{this_dir}/src/flash_attn/src", 

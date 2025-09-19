@@ -1,0 +1,12 @@
+[build-system]
+requires = [
+  "setuptools>=61",
+  "wheel",
+  # torch is required at build time because setup.py uses torch.utils.cpp_extension
+  "torch>=2.0.0",
+  # ninja is used by BuildExtension for faster compilation
+  "ninja>=1.10.0",
+]
+build-backend = "setuptools.build_meta"
+
+

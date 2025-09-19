@@ -1,9 +1,9 @@
-# ARG CUDA_VERSION=12.6.0
+# ARG CUDA_VERSION=12.8.0
 # ARG UBUNTU_VERSION=22.04
-ARG BASE_IMAGE=docker.io/pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel
-# Default support for mainstream CUDA architectures (excluding 120: CUDA 12.6 doesn't support Blackwell/SM120)
+ARG BASE_IMAGE=docker.io/pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel
+# Default support for mainstream CUDA architectures (excluding 120: CUDA 12.8 doesn't support Blackwell/SM120)
 # 80=A100/A800, 86=RTX30 series, 87=Jetson Orin, 89=RTX40 series, 90=H100/H800
-ARG CUDA_ARCH="80,86,87,89,90"
+ARG CUDA_ARCH="80,86,87,89,90,120"
 # FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS build
 FROM ${BASE_IMAGE} AS build
 
@@ -32,9 +32,9 @@ ARG https_proxy
 RUN if [ -n "$http_proxy$https_proxy" ]; then \
       git -c http.https://github.com.proxy="$http_proxy" \
           -c https.https://github.com.proxy="$https_proxy" \
-          clone --recursive https://github.com/OpenBMB/CPM.cu.git; \
+          clone -b master --recursive https://github.com/jk3456a/CPM.cu.git; \
     else \
-      git clone --recursive https://github.com/OpenBMB/CPM.cu.git; \
+      git clone -b master --recursive https://github.com/jk3456a/CPM.cu.git; \
     fi
 
 # Switch to project directory
@@ -46,7 +46,7 @@ RUN echo "=== CPM.cu Compilation Configuration ===" && \
     echo "CUDA Architecture: $CUDA_ARCH (pre-compiled support)" && \
     echo "Data Types: fp16,bf16 (full support)" && \
     echo "Build Mode: Release (production optimized)" && \
-    echo "Supported GPUs: A100/A800(80), RTX30 series(86), Jetson Orin(87), RTX40 series(89), H100/H800(90)" && \
+    echo "Supported GPUs: A100/A800(80), RTX30 series(86), Jetson Orin(87), RTX40 series(89), H100/H800(90), RTX50 series(120)" && \
     echo "=========================================" && \
     export CPMCU_CUDA_ARCH="$CUDA_ARCH" && \
     export CPMCU_DEBUG=0 && \

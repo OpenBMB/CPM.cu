@@ -48,6 +48,8 @@ https://github.com/user-attachments/assets/ab36fd7a-485b-4707-b72f-b80b5c43d024
 
 本库的构建依赖于 PyTorch 和 Ninja，请在安装本库前确保已正确安装这两个依赖。
 
+支持的 Python 版本：3.8–3.12。
+
 ```bash
 git clone https://github.com/OpenBMB/CPM.cu.git --recursive
 cd CPM.cu
@@ -62,39 +64,49 @@ pip install .
 
 我们提供了预构建的 Docker 镜像，支持开箱即用的 GPU 推理环境。
 
+### 镜像目录
+
+| 镜像 | 描述 | 镜像链接 |
+|-------|-------------|-------|
+| cpmcu:cuda12.6-release | 建议镜像，支持RTX 30/40系列 和 H100/H800 等主流GPU |modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.6:v1.0.0|
+| cpmcu:cuda12.8-release | CUDA 12.8, 增加了RTX 50系的支持 |modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.8:v1.0.0|
+| cpmcu:jetpack6.1| Jetpack 6, 增加了Jetson Orin的支持, 开发中 |----------|
+| cpmcu:cuda11.8-release | CUDA 11.8, 开发中 |----------|
+
 ### 快速开始
 
 ```bash
 # 拉取预构建镜像
-docker pull cpmcu/cpmcu:cuda12.6-release
+docker pull modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.6:v1.0.0
+
+docker tag modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.6:v1.0.0 cpmcu:cuda12.6-release
 
 # 运行交互式容器
-docker run --gpus all -it cpmcu:cuda12.6-release
+docker run --gpus all -it cpmcu:cuda12.6-release /bin/bash
 
-# 启动 API 服务器
+# 启动 API 服务器(需要登录 huggingface 或 -v 挂载模型)
 docker run --gpus all -p 8000:8000 cpmcu:cuda12.6-release \
-  python examples/minicpm4/start_server.py
+  python examples/minicpm4/start_server.py --apply-sparse 
 ```
 
 ### 离线使用（推荐）
 
 ```bash
 # 1. 在宿主机下载模型
-huggingface-cli download openbmb/MiniCPM4-8B --local-dir /path/to/model
+huggingface-cli download openbmb/MiniCPM4-8B-marlin-cpmcu --local-dir model/MiniCPM4-8B-marlin-cpmcu
 
 #    同时下载离线草稿模型与 FRSpec（用于开启投机采样，可选）
-huggingface-cli download openbmb/MiniCPM4-8B-Eagle-FRSpec-QAT-cpmcu --local-dir /path/to/draft
+huggingface-cli download openbmb/MiniCPM4-8B-Eagle-FRSpec-QAT-cpmcu --local-dir model/MiniCPM4-8B-Eagle-FRSpec-QAT-cpmcu  
 
 # 2. 挂载模型目录运行
 docker run --rm --gpus all \
   -v /path/to/model:/workspace/model \
-  -v /path/to/draft:/workspace/draft \
   cpmcu:cuda12.6-release \
   bash -lc 'cd examples && python3 minicpm4/test_generate.py \
-    --model-path /workspace/model \
-    --draft-model-path /workspace/draft \
-    --frspec-path /workspace/draft \
-    --prompt-text "你好" --num-generate 128 --use-stream false'
+    --model-path /workspace/model/MiniCPM4-8B-marlin-cpmcu \
+    --draft-model-path /workspace/model/MiniCPM4-8B-Eagle-FRSpec-QAT-cpmcu \
+    --frspec-path /workspace/model/MiniCPM4-8B-Eagle-FRSpec-QAT-cpmcu \
+    --prompt-text "Hello" --num-generate 128 --use-stream false'
 ```
 
 **详细文档**: [Docker 用户指南](doc/ch/docker_use.md)
@@ -185,9 +197,30 @@ CPM.cu 支持部署为一个与 OpenAI API 兼容的服务，方便与现有的�
 启动 OpenAI 兼容的 API 服务器（参数与 `examples/minicpm4/test_generate.py` 相同）：
 
 ```bash
-python examples/minicpm4/start_server.py [options]
+python examples/minicpm4/start_server.py --apply-sparse 
+# 这个脚本提供了简易的配置，通过一个参数就可以一键部署模型
+
+MiniCPM4 Configuration:
+  --apply-sparse [APPLY_SPARSE], --apply_sparse [APPLY_SPARSE]
+                        Enable sparse attention (default: True)
+  --apply-quant [APPLY_QUANT], --apply_quant [APPLY_QUANT]
+                        Enable quantization for base model (default: True)
+  --apply-eagle [APPLY_EAGLE], --apply_eagle [APPLY_EAGLE]
+                        Enable Eagle speculative decoding (default: True)
+  --apply-eagle-quant [APPLY_EAGLE_QUANT], --apply_eagle_quant [APPLY_EAGLE_QUANT]
+                        Enable quantization for Eagle draft model (default: True)
+  --minicpm4-yarn [MINICPM4_YARN], --minicpm4_yarn [MINICPM4_YARN]
+                        Enable MiniCPM4 YARN for long context support (default: True)
 ```
 服务启动后，默认监听在 `http://localhost:8000`。你可以通过 `--host` 和 `--port` 参数来修改。
+
+对于需要更精细化控制推理参数（如温度、生成长度等）的用户，我们推荐直接使用 `cpmcu.server` 模块。这是进行详细配置和测试最灵活的方式。
+
+你可以通过 `python -m cpmcu.server -h` 查看所有可用参数。
+
+```bash
+python -m cpmcu.server [options]
+```
 
 ### 2. 测试服务
 

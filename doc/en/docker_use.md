@@ -8,7 +8,8 @@ This document is for **users** who want to use CPM.cu Docker images for LLM infe
 
 - Docker installed
 - NVIDIA GPU drivers (recommended version >= 525.60.13)
-- Supported GPUs: A100/A800, RTX 30/40 series, H100/H800, Jetson Orin
+- Supported GPUs: A100/A800, RTX 30/40/50 series, H100/H800
+- Python versions: 3.8–3.12 are supported (host Python not required when using Docker)
 
 ### Get the Image
 
@@ -16,6 +17,10 @@ This document is for **users** who want to use CPM.cu Docker images for LLM infe
 # Method 1: Use pre-built image (recommended)
 docker pull modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.6:v1.0.0
 docker tag modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.6:v1.0.0 cpmcu:cuda12.6-release
+
+# Optional: CUDA 12.8 (recommended for RTX 50 series)
+docker pull modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.8:v1.0.0
+docker tag modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.8:v1.0.0 cpmcu:cuda12.8-release
 
 # Method 2: Build locally
 git clone https://github.com/OpenBMB/CPM.cu.git

@@ -8,12 +8,11 @@ set -e
 
 CUDA_ARCH=${1:-""}
 BASE_IMAGE=${2:-""}
-IMAGE_TAG="cpmcu:cuda12.6-release"
+IMAGE_TAG="cpmcu:cuda12.8-release"
 
-# Default CUDA arch list (CUDA 12.6 does not support SM120/Blackwell)
-DEFAULT_CUDA_ARCH="80,86,87,89,90"
+DEFAULT_CUDA_ARCH="80,86,87,89,90,120"
 # Default base image (prefer nvcr.io variant)
-DEFAULT_BASE_IMAGE="docker.io/pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel"
+DEFAULT_BASE_IMAGE="docker.io/pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel"
 
 echo "=== CPM.cu Docker Build Config ==="
 echo "Build type: Release (production optimized)"
@@ -25,7 +24,7 @@ if [ -n "$BASE_IMAGE" ]; then
 else
     echo "Base image: $DEFAULT_BASE_IMAGE (default)"
     # Check whether the nvcr.io image exists locally
-    if docker image inspect docker.io/pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel >/dev/null 2>&1; then
+    if docker image inspect docker.io/pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel >/dev/null 2>&1; then
         echo "✅ Detected local nvcr.io image, will use local copy"
     else
         echo "⚠️  No local nvcr.io image, will pull from registry"
@@ -115,7 +114,6 @@ echo "✅ Out-of-the-box: supports mainstream GPUs"
 echo "✅ Data types: fp16, bf16"
 echo "✅ Release mode: optimized for performance"
 echo "✅ Memory-friendly build: 4 compile jobs"
-echo "ℹ️  Note: CUDA 12.6 does NOT support SM120/Blackwell"
 echo ""
 echo "=== Supported GPU arch ==="
 echo "80: A100, A800 (data center)"
@@ -123,17 +121,20 @@ echo "86: RTX 3090, RTX 3080, RTX 3070 (consumer)"
 echo "87: Jetson Orin (edge)"
 echo "89: RTX 4090, RTX 4080 (consumer)"
 echo "90: H100, H800 (data center)"
+echo "120: RTX 5090, RTX 5070Ti (Blackwell)"
 echo ""
 echo "=== Examples ==="
 echo "# Basic"
 echo "./build.sh                                    # default build"
 echo "./build.sh \"80,90\"                          # custom CUDA arch"
 echo ""
-echo "=== Base image options ==="
-echo "docker.io/pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel  "
+echo "# Specify base image"
+echo "./build.sh \"\" docker.io/pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel  # use Docker Hub image"
+echo "./build.sh \"86,89,120\" nvcr.io/nvidia/cuda:12.8.0-devel-ubuntu22.04  # full custom"
 echo ""
 echo "=== CUDA arch examples ==="
-echo "\"80,90\"     # data center only"
+echo "\"80,90,120\"     # data center only"
 echo "\"86,89\"     # consumer only"
 echo "\"87\"        # Jetson only"
+echo "\"120\"       # Blackwell only"
 echo "=========================="

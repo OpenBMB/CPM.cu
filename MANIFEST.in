@@ -1,0 +1,10 @@
+include README.md
+include README_ZH.md
+recursive-include src *.h *.hpp *.cuh *.cu *.cuh *.inl
+recursive-include src/flash_attn *.hpp *.h *.cu
+recursive-include src/cutlass/include *.hpp *.h
+recursive-include src/qgemm *.cu *.cuh *.h *.hpp
+recursive-include cpmcu *.py
+recursive-exclude * __pycache__ *.pyc *.pyo *.so
+
+

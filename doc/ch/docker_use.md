@@ -9,16 +9,22 @@
 
 - 安装Docker
 - NVIDIA GPU驱动 (推荐版本 >= 525.60.13)
-- 当前镜像支持的GPU: A100/A800、RTX 30/40系列、H100/H800、Jetson Orin
+- 当前镜像支持的GPU: A100/A800、RTX 30/40/50系列、H100/H800
+- Python 版本：支持 3.8–3.12（使用 Docker 时宿主机无需安装 Python）
 
 ### 获取镜像
 
 ```bash
 # 方式1: 使用预构建镜像（推荐）
-docker pull cpmcu/cpmcu:cuda12.6-release
+docker pull modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.6:v1.0.0
+docker tag modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.6:v1.0.0 cpmcu:cuda12.6-release
+
+# 可选：CUDA 12.8（RTX 50 系推荐）
+docker pull modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.8:v1.0.0
+docker tag modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.8:v1.0.0 cpmcu:cuda12.8-release
 
 # 方式2: 本地构建
-git clone https://github.com/jk3456a/CPM.cu.git
+git clone https://github.com/OpenBMB/CPM.cu.git
 cd CPM.cu/docker/cuda12.6
 ./build.sh
 ```
