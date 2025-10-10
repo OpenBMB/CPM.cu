@@ -299,6 +299,13 @@ Please cite our paper if you find our work valuable.
   year={2025}
 }
 
+@article{zhao2025infllm,
+  title={InfLLM-V2: Dense-Sparse Switchable Attention for Seamless Short-to-Long Adaptation},
+  author={Zhao, Weilin and Zhou, Zihan and Su, Zhou and Xiao, Chaojun and Li, Yuxuan and Li, Yanghao and Zhang, Yudi and Zhao, Weilun and Li, Zhen and Huang, Yuxiang and others},
+  journal={arXiv preprint arXiv:2509.24663},
+  year={2025}
+}
+
 @article{zhang2025specmqaunt,
   title={Speculative Decoding Meets Quantization: Compatibility Evaluation and Hierarchical Framework Design},
   author={Zhang, Yudi and Zhao, Weilin and Han, Xu and Zhao, Tiejun and Xu, Wang and Cao, Hailong and Zhu, Conghui},
