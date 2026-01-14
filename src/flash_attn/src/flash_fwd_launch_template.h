@@ -209,7 +209,7 @@ void run_mha_fwd_splitkv_dispatch(Flash_fwd_params &params, cudaStream_t stream)
         if (params.m_block_dim == 1) {
             run_flash_splitkv_fwd<Flash_fwd_kernel_traits<Headdim, kBlockM, kBlockN, 4, false, false, T>, Is_causal>(params, stream);
         } else {
-            run_flash_splitkv_fwd_stage1<Flash_fwd_kernel_traits<Headdim, kBlockM, kBlockN, 4, false, false, T>, Is_causal>(params, stream);
+            run_flash_splitkv_fwd_stage1<Flash_fwd_kernel_traits<Headdim, 16, 64, 1, false, false, T>, Is_causal>(params, stream);
         }
     } else {
         constexpr static int kBlockM = 16;
