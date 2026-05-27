@@ -75,6 +75,8 @@ pip install .
 
 ### 快速开始
 
+如果你使用的是 RTX 50 系显卡，建议优先使用下面的 CUDA 12.8 镜像。仓库现有 Docker 文档已经将 CUDA 12.8 作为 RTX 50 系支持的推荐路径。
+
 ```bash
 # 拉取预构建镜像
 docker pull modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.6:v1.0.0
@@ -87,6 +89,15 @@ docker run --gpus all -it cpmcu:cuda12.6-release /bin/bash
 # 启动 API 服务器(需要登录 huggingface 或 -v 挂载模型)
 docker run --gpus all -p 8000:8000 cpmcu:cuda12.6-release \
   python examples/minicpm4/start_server.py --apply-sparse 
+```
+
+```bash
+# RTX 50 系快速开始
+docker pull modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.8:v1.0.0
+
+docker tag modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.8:v1.0.0 cpmcu:cuda12.8-release
+
+docker run --gpus all -it cpmcu:cuda12.8-release /bin/bash
 ```
 
 ### 离线使用（推荐）
