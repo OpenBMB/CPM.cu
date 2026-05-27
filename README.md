@@ -75,6 +75,8 @@ We provide pre-built Docker images that support out-of-the-box GPU inference env
 
 ### Quick Start
 
+If you are using an RTX 50 series GPU, prefer the CUDA 12.8 image below. The repo's Docker docs already recommend CUDA 12.8 for RTX 50 series support.
+
 ```bash
 # Pull pre-built image
 docker pull modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.6:v1.0.0
@@ -87,6 +89,15 @@ docker run --gpus all -it cpmcu:cuda12.6-release /bin/bash
 # Start API server(need to login to huggingface or -v mount model)
 docker run --gpus all -p 8000:8000 cpmcu:cuda12.6-release \
   python examples/minicpm4/start_server.py --apply-sparse 
+```
+
+```bash
+# RTX 50 series quick start
+docker pull modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.8:v1.0.0
+
+docker tag modelbest-registry.cn-beijing.cr.aliyuncs.com/model-align/cpmcu_cu12.8:v1.0.0 cpmcu:cuda12.8-release
+
+docker run --gpus all -it cpmcu:cuda12.8-release /bin/bash
 ```
 
 ### Offline Usage (Recommended)
